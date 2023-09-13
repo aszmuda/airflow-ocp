@@ -1,0 +1,21 @@
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: {{ include "webserver.fullname" . }}
+  labels:
+    {{- include "webserver.labels" . | nindent 4 }}
+spec:
+{{- if .Values.airflow.webserver.route.host }}
+  host: {{ .Values.airflow.webserver.route.host }}
+{{- end}}
+  to:
+    kind: Service
+    name: {{ include "webserver.fullname" . }}
+    weight: 100
+  port:
+    targetPort: {{ default 8080 .Values.airflow.webserver.service.port }}
+  wildcardPolicy: None
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: None

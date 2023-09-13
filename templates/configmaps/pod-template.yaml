@@ -1,0 +1,90 @@
+---
+{{ if or (eq .Values.airflow.executor "KubernetesExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-pod-template-config
+  labels:
+    app.kubernetes.io/name: {{ include "app.name" . }}
+    app.kubernetes.io/component: configmap
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ include "airflow.chart" . }}
+data:
+    pod_template_file.yaml: |-
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: {{ include "worker.fullname" . }}
+        labels:
+        {{- include "worker.labels" . | nindent 10 }} 
+      spec:
+        {{- if .Values.dags.gitSync.enabled }}
+        initContainers:
+        {{- include "git_sync_container" (dict "Values" .Values "is_init" "true" "Template" .Template) | nindent 10 }}
+        {{- end }}
+        containers:
+          - name: base
+            image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+            imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+            env:
+              - name: AIRFLOW__CORE__EXECUTOR
+                value: LocalExecutor
+              - name: AIRFLOW__CORE__FERNET_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Release.Name }}-common
+                    key: airflow-fernet-key
+              - name: AIRFLOW__WEBSERVER__SECRET_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Release.Name }}-common
+                    key: webserver-secret-key
+              - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ include "postgresql.fullname" . }}
+                    key: connection
+              {{- if .Values.dags.gitSync.enabled }}
+              - name: AIRFLOW__CORE__DAGS_FOLDER
+                value: {{ template "airflow_dags" . }}
+              {{- end }}
+              - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+                value: {{ .Release.Namespace }}
+              - name: AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS 
+                value: "{{ .Values.airflow.worker.k8sExecutor.deleteWorkerPod }}"
+              - name: AIRFLOW__KUBERNETES_EXECUTOR__DELETE_WORKER_PODS_ON_FAILURE 
+                value: "{{ .Values.airflow.worker.k8sExecutor.deleteWorkerPodOnFailure }}"
+              - name: AIRFLOW__KUBERNETES_EXECUTOR__POD_TEMPLATE_FILE
+                value: {{ .Values.airflow.homeDir }}/pod_templates/pod_template_file.yaml
+              - name: AIRFLOW__CORE__DAG_IGNORE_FILE_SYNTAX
+                value: {{ .Values.airflow.worker.dagIgnoreFileSyntax }}
+            volumeMounts:
+              - name: dags-data
+                mountPath: {{ .Values.airflow.homeDir }}/dags
+              {{- if .Values.airflow.logs.persistence.enabled }}
+              - name: logs
+                mountPath: {{ template "airflow_logs" . }}
+              {{- end }}
+              - name: pod-template
+                mountPath: {{ include "airflow_pod_template_file" . }}/pod_template_file.yaml
+                subPath: pod_template_file.yaml
+                readOnly: true
+            resources:
+              {{- toYaml .Values.airflow.worker.resources | nindent 14 }}
+        volumes:
+          - name: dags-data
+            emptyDir: {}
+          - name: pod-template
+            configMap:
+              name: {{ .Release.Name }}-pod-template-config
+              defaultMode: 420
+          {{- if .Values.airflow.logs.persistence.enabled }}
+          - name: logs
+            persistentVolumeClaim:
+              claimName: {{ include "airflow_logs_volume_claim" . }}
+          {{- end }}
+        restartPolicy: Never
+        serviceAccountName: {{ include "airflow.serviceAccountName" . }}
+  {{ end }}

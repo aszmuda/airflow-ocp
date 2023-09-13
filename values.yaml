@@ -1,0 +1,333 @@
+---
+## airflow config ##
+airflow:
+
+  ## airflow container image config
+  image:
+    repository:
+    pullPolicy:
+    tag:
+
+  ## the airflow executor type to use
+  ## allowed values: "CeleryExecutor", "KubernetesExecutor", "CeleryKubernetesExecutor"
+  executor: KubernetesExecutor
+
+  ## the fernet encryption key (sets `AIRFLOW__CORE__FERNET_KEY`)
+  ## must be set
+  fernetKey:
+
+  ## airflow home directory
+  homeDir: /opt/airflow
+
+  ## airflow webserver config
+  webserver:
+    replicas:
+    nameOverride:
+    fullnameOverride:
+    command: ~
+    args: [ "bash", "-c", "exec airflow webserver" ]
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+    defaultUser:
+      enabled: # true/false
+      role:
+      username:
+      email:
+      firstName:
+      lastName:
+      password:
+    route:
+      host:
+    service:
+      port: # default 8080
+    secretKey: #must be set
+    waitForMigrations:
+      enabled: # true/false
+      migrationsWaitTimeout:
+
+  ## airflow scheduler config
+  scheduler:
+    replicas:
+    nameOverride:
+    fullnameOverride:
+    command: ~
+    args: [ "bash", "-c", "exec airflow scheduler" ]
+    dags:
+      listInterval:
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+    waitForMigrations:
+      enabled:
+      migrationsWaitTimeout:
+    dagIgnoreFileSyntax: # glob or regex(default)
+    livenessProbe:
+      enabled: # true/false
+      initialDelaySeconds:
+      periodSeconds:
+      timeoutSeconds:
+      failureThreshold:
+    logGroomerSidecar:
+      enabled: # true/false
+      command: ~
+      args: [ "bash", "/opt/airflow/bin/clean-logs.sh" ]
+      retentionDays: 1
+      resources:
+        limits:
+          cpu:
+          memory:
+        requests:
+          cpu:
+          memory:
+
+  ## airflow worker config
+  worker:
+    ## if the airflow workers StatefulSet should be deployed
+    enabled: # true/false
+    replicas:
+    nameOverride:
+    fullnameOverride:
+    command: ~
+    args: [ "bash", "-c", "exec airflow celery worker" ]
+    port: # default 8793
+    k8sExecutor:
+      deleteWorkerPod: # true/false
+      deleteWorkerPodOnFailure: # true/false
+    celery:
+      gracefullTermination: # true/false
+      gracefullTerminationPeriod:
+      workerConcurrency: # default is 16 but will require more memory resources
+    dags:
+      listInterval:
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+    dagIgnoreFileSyntax: # glob or regex(default)
+    livenessProbe:
+      enabled: # true/false
+      initialDelaySeconds:
+      periodSeconds:
+      timeoutSeconds:
+      failureThreshold:
+    logGroomerSidecar:
+      enabled: # true/false
+      command: ~
+      args: [ "bash", "/opt/airflow/bin/clean-logs.sh" ]
+      retentionDays:
+      resources:
+        limits:
+          cpu:
+          memory:
+        requests:
+          cpu:
+          memory:
+
+  ## airflow triggerer config
+  triggerer:
+    enabled: # true/false
+    replicas:
+    nameOverride:
+    fullnameOverride:
+    command: ~
+    args: [ "bash", "-c", "exec airflow triggerer" ]
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+    livenessProbe:
+      enabled: # true/false
+      initialDelaySeconds:
+      periodSeconds:
+      timeoutSeconds:
+      failureThreshold:
+
+  ## airflow persistent log storage config
+  logs:
+    persistence:
+      enabled: # true/false
+      accessModes:
+        # - ReadWriteOnce
+      # Volume size for logs
+      size: # 1Gi
+      annotations: {}
+      storageClassName:
+      existingClaim:
+
+  ## airflow persistent log groomer config
+  persistentLogGroomer:
+    enabled: # true/false
+    command: ~
+    args: [ "bash", "/opt/airflow/bin/clean-logs-job.sh" ]
+    retentionDays:
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+
+  ## airflow database migration job config
+  migrateDatabaseJob:
+    enabled: # true/false
+    nameOverride:
+    fullnameOverride:
+    ttlSecondsAfterFinished:
+    command: ~
+    args: [ "bash", "-c", "exec airflow db upgrade" ]
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+
+  ## airflow create user job config
+  createUserJob:
+    enabled: # true/false
+    nameOverride:
+    fullnameOverride:
+    ttlSecondsAfterFinished:
+    command: ~
+    args:
+      - "bash"
+      - "-c"
+      - |-
+        exec \
+        airflow users create "$@"
+      - --
+      - "-r"
+      - "{{ .Values.airflow.webserver.defaultUser.role }}"
+      - "-u"
+      - "{{ .Values.airflow.webserver.defaultUser.username }}"
+      - "-e"
+      - "{{ .Values.airflow.webserver.defaultUser.email }}"
+      - "-f"
+      - "{{ .Values.airflow.webserver.defaultUser.firstName }}"
+      - "-l"
+      - "{{ .Values.airflow.webserver.defaultUser.lastName }}"
+      - "-p"
+      - "{{ .Values.airflow.webserver.defaultUser.password }}"
+    resources:
+      limits:
+        cpu:
+        memory:
+      requests:
+        cpu:
+        memory:
+
+###################################
+## Embedded PostgreSQL
+###################################
+postgresql:
+  enabled: # true/false
+  type: postgresql
+  replicas: 1
+  nameOverride:
+  fullnameOverride:
+  image:
+    repository: registry.redhat.io/rhel9/postgresql-15
+    pullPolicy: IfNotPresent
+    tag: "1-19"
+  resources:
+    limits:
+      cpu:
+      memory:
+    requests:
+      cpu:
+      memory:
+  auth:
+    adminPassword:
+    userName:
+    userPassword:
+  database:
+  host:
+  port: # default 5432
+  accessModes:
+    # - ReadWriteOnce
+  storage: # 1Gi
+
+
+##############################################################################################
+## Embedded Redis
+##
+## Only deployed if the executor type is either "CeleryExecutor" or "CeleryKubernetesExecutor"
+##############################################################################################
+redis:
+  enabled: # true/false
+  replicas: 1
+  nameOverride:
+  fullnameOverride:
+  image:
+    repository: registry.redhat.io/rhel9/redis-6
+    pullPolicy: IfNotPresent
+    tag: "1-135"
+  port: # default 6379
+  auth:
+    password:
+  resources:
+    limits:
+      cpu:
+      memory:
+    requests:
+      cpu:
+      memory:
+  persistence:
+    enabled: # true/false
+    accessModes:
+      # - ReadWriteOnce
+    storage: # 1Gi
+
+
+## dag git-sync container config
+## running either as sidecar or init containers inside scheduler/worker pods
+dags:
+  gitSync:
+    enabled: true
+    image:
+      repository: registry.k8s.io/git-sync/git-sync
+      tag: v3.6.3
+      pullPolicy:
+    repo:
+    branch: main
+    rev: HEAD
+    depth: 1
+    maxFailures: 0
+    subPath: ""
+    wait: 5
+    containerName: git-sync
+    resources:
+     limits:
+      cpu:
+      memory:
+     requests:
+      cpu:
+      memory:
+
+
+## airflow config if keycloak is used for OIDC authentication
+## keycloak installation and configuration is out of chart scope
+keycloak:
+  enabled: # true/false
+  oidcIssuer:
+  clientId:
+  clientSecret:
+
+

@@ -1,0 +1,25 @@
+{{- if and (not .Values.airflow.logs.persistence.existingClaim ) .Values.airflow.logs.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "airflow_logs_volume_claim" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "app.name" . }}
+    app.kubernetes.io/component: logs-pvc
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    helm.sh/chart: {{ include "airflow.chart" . }}
+spec:
+  accessModes: {{ .Values.airflow.logs.persistence.accessModes }}
+  resources:
+    requests:
+      storage: {{ .Values.airflow.logs.persistence.size | quote }}
+  {{- if .Values.airflow.logs.persistence.storageClassName }}
+  {{- if (eq "-" .Values.airflow.logs.persistence.storageClassName) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: "{{ .Values.airflow.logs.persistence.storageClassName }}"
+  {{- end }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,87 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "triggerer.fullname" . }}
+  labels:
+    {{- include "triggerer.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "triggerer.selectorLabels" . | nindent 6 }}
+  replicas: {{ .Values.airflow.triggerer.replicas }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "triggerer.selectorLabels" . | nindent 8 }}
+    spec:
+      priorityClassName: ""
+      affinity:
+        podAffinity: {}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "triggerer.selectorLabels" . | nindent 20 }}
+                namespaces:
+                  - {{ .Release.Namespace }}
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+        nodeAffinity: {}
+      containers:
+        - name: airflow-triggerer
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+          {{- if .Values.airflow.triggerer.command }}
+          command: {{- tpl (toYaml .Values.airflow.triggerer.command) . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.airflow.triggerer.args }}
+          args: {{- tpl (toYaml .Values.airflow.triggerer.args) . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: airflow-fernet-key
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: webserver-secret-key
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor }}
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.fullname" . }}
+                  key: connection
+          {{- if .Values.airflow.triggerer.livenessProbe.enabled }}
+          livenessProbe:
+            failureThreshold: {{ .Values.airflow.triggerer.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.airflow.triggerer.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.airflow.triggerer.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.airflow.triggerer.livenessProbe.timeoutSeconds }}
+            exec:
+              command:
+              {{- include "triggerer_liveness_check_command" . | indent 14 }}
+          {{ end }}
+          volumeMounts:
+            {{- if .Values.airflow.logs.persistence.enabled }}
+            - name: logs
+              mountPath: {{ template "airflow_logs" . }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.airflow.triggerer.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.airflow.logs.persistence.enabled }}
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ template "airflow_logs_volume_claim" . }}
+        {{- end }}
+      serviceAccountName: {{ include "airflow.serviceAccountName" . }}

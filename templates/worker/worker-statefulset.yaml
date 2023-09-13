@@ -1,0 +1,125 @@
+---
+{{ if or (eq .Values.airflow.executor "CeleryExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+{{ if .Values.airflow.worker.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "worker.fullname" . }}
+  labels:
+    {{- include "worker.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "worker.selectorLabels" . | nindent 6 }}
+  serviceName: {{ include "worker.fullname" . }}-headless
+  replicas: {{ .Values.airflow.worker.replicas }}
+  updateStrategy:
+    type: "RollingUpdate"
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "worker.selectorLabels" . | nindent 8 }}
+    spec:
+      priorityClassName: ""
+      affinity:
+        podAffinity: {}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "worker.selectorLabels" . | nindent 20 }}
+                namespaces:
+                  - {{ .Release.Namespace }}
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+        nodeAffinity: {}
+      containers:
+        - name: airflow-worker
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+          {{- if .Values.airflow.worker.command }}
+          command: {{- tpl (toYaml .Values.airflow.worker.command) . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.airflow.worker.args }}
+          args: {{- tpl (toYaml .Values.airflow.worker.args) . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: airflow-fernet-key
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: webserver-secret-key
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.fullname" . }}
+                  key: connection
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor }}
+            {{- if or (eq .Values.airflow.executor "KubernetesExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+            - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: AIRFLOW__KUBERNETES_EXECUTOR__POD_TEMPLATE_FILE
+              value: {{ .Values.airflowHome }}/pod_templates/pod_template_file.yaml
+            {{ end }}
+            - name: AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL
+              value: "{{ .Values.airflow.worker.dags.listInterval }}"
+            {{- if .Values.dags.gitSync.enabled }}
+            - name: AIRFLOW__CORE__DAGS_FOLDER
+              value: {{ template "airflow_dags" . }}
+            {{- end }}
+            - name: AIRFLOW__CORE__DAG_IGNORE_FILE_SYNTAX
+              value: {{ .Values.airflow.worker.dagIgnoreFileSyntax }}
+            - name: AIRFLOW__CELERY__BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis.fullname" . }}
+                  key: connection
+            - name: AIRFLOW__CELERY__WORKER_CONCURRENCY
+              value: "{{ .Values.airflow.worker.celery.workerConcurrency }}"
+          ports:
+            - name: worker
+              containerPort: 8793
+          {{- if .Values.airflow.worker.celery.gracefullTermination }}
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                    {{- include "worker_lifecycle_prestop_command" . | indent 14 }}
+          {{ end }}
+          {{- if .Values.airflow.worker.livenessProbe.enabled }}
+          livenessProbe:
+              failureThreshold: {{ .Values.airflow.worker.livenessProbe.failureThreshold }}
+              initialDelaySeconds: {{ .Values.airflow.worker.livenessProbe.initialDelaySeconds }}
+              periodSeconds: {{ .Values.airflow.worker.livenessProbe.periodSeconds }}
+              timeoutSeconds: {{ .Values.airflow.worker.livenessProbe.timeoutSeconds }}
+              exec:
+                command:
+                    {{- include "worker_liveness_check_command" . | indent 14 }}
+          {{ end }}
+          volumeMounts:
+            - name: dags-data
+              mountPath: {{ .Values.airflow.homeDir }}/dags
+          resources:
+            {{- toYaml .Values.airflow.worker.resources | nindent 12 }}
+        {{- if .Values.dags.gitSync.enabled }}
+        {{- include "git_sync_container" . | indent 8 }}
+        {{- end }}
+      volumes:
+        - name: dags-data
+          emptyDir: {}
+      serviceAccountName: {{ include "airflow.serviceAccountName" . }}
+  {{ end }}
+  {{ end }}

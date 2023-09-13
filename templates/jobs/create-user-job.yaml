@@ -1,0 +1,55 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "create-user.fullname" . }}
+  labels:
+    {{- include "create-user.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.airflow.createUserJob.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "create-user.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      affinity: {}
+      containers:
+        - name: run-airflow-migrations
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+          {{- if .Values.airflow.createUserJob.command }}
+          command: {{- tpl (toYaml .Values.airflow.createUserJob.command) . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.airflow.createUserJob.args }}
+          args: {{- tpl (toYaml .Values.airflow.createUserJob.args) . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: airflow-fernet-key
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: webserver-secret-key
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.fullname" . }}
+                  key: connection
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor }}
+            {{- if or (eq .Values.airflow.executor "KubernetesExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+            - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+              value: {{ .Release.Namespace }}
+            {{ end }}
+      serviceAccountName: {{ include "airflow.serviceAccountName" . }}

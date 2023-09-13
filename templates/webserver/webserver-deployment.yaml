@@ -1,0 +1,142 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "webserver.fullname" . }}
+  labels:
+    {{- include "webserver.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "webserver.selectorLabels" . | nindent 6 }}
+  replicas: {{ .Values.airflow.webserver.replicas }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "webserver.selectorLabels" . | nindent 8 }}
+    spec:
+      priorityClassName: ""
+      affinity:
+        podAffinity: {}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "webserver.selectorLabels" . | nindent 20 }}
+                namespaces:
+                  - {{ .Release.Namespace }}
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+        nodeAffinity: {}
+      initContainers:
+        {{- if .Values.airflow.webserver.waitForMigrations.enabled }}
+        - name: wait-for-airflow-migrations
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+          args: {{- include "wait-for-migrations-command" . | indent 10 }}
+          env:
+          - name: AIRFLOW__CORE__FERNET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Release.Name }}-common
+                key: airflow-fernet-key
+          - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "postgresql.fullname" .}}
+                key: connection
+          resources: {{- toYaml .Values.airflow.webserver.resources | nindent 12 }}
+        {{- end }}
+      containers:
+        - name: webserver
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy:  {{ .Values.airflow.image.pullPolicy }}
+          {{- if .Values.airflow.webserver.command }}
+          command: {{- tpl (toYaml .Values.airflow.webserver.command) . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.airflow.webserver.args }}
+          args: {{- tpl (toYaml .Values.airflow.webserver.args) . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: airflow-fernet-key
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-common
+                  key: webserver-secret-key
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.fullname" .}}
+                  key: connection
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: {{ .Values.airflow.executor }}
+            {{- if or (eq .Values.airflow.executor "KubernetesExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+            - name: AIRFLOW__KUBERNETES_EXECUTOR__NAMESPACE
+              value: {{ .Release.Namespace }}
+            {{ end }}
+            - name: AIRFLOW__WEBSERVER__WEB_SERVER_HOST
+              value: "0.0.0.0"
+            - name: AIRFLOW__WEBSERVER__WEB_SERVER_PORT
+              value: "8080"
+            - name: AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX
+              value: "true"
+            {{- if .Values.keycloak.enabled }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.keycloak.oidcIssuer }}
+            - name: CLIENT_ID
+              value: {{ .Values.keycloak.clientId }}
+            - name: CLIENT_SECRET
+              value: {{ .Values.keycloak.clientSecret }}
+            {{ end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 6
+            initialDelaySeconds: 180
+            periodSeconds: 20
+            successThreshold: 1
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 6
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.airflow.webserver.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: {{ .Values.airflow.homeDir }}/webserver_config.py
+              name: webserver-config
+              subPath: webserver_config.py
+          {{- if .Values.airflow.logs.persistence.enabled }}
+            - name: logs
+              mountPath: {{ template "airflow_logs" . }}
+          {{- end }}
+      serviceAccountName: {{ include "airflow.serviceAccountName" . }}
+      volumes:
+        - name: webserver-config
+          configMap:
+            name: {{ include "webserver.fullname" . }}-config
+            defaultMode: 420
+        {{- if .Values.airflow.logs.persistence.enabled }}
+        - name: logs
+          persistentVolumeClaim:
+            claimName: {{ template "airflow_logs_volume_claim" . }}
+        {{- end }}

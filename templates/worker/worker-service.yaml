@@ -1,0 +1,20 @@
+---
+{{ if or (eq .Values.airflow.executor "CeleryExecutor") (eq .Values.airflow.executor "CeleryKubernetesExecutor") }}
+{{- if .Values.airflow.worker.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker.fullname" . }}-headless
+  labels:
+    {{- include "worker.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: worker
+      port: {{ .Values.airflow.worker.port }}
+      targetPort: worker
+  selector:
+    {{- include "worker.selectorLabels" . | nindent 4 }}
+  {{ end }}
+  {{ end }}
